@@ -31,3 +31,16 @@ body {
     text-wrap: balance;
   }
 }
+
+
+
+th {
+  @apply p-2;
+  @apply text-left
+}
+
+td {
+  @apply p-2;
+  @apply text-left;
+  @apply border-b;
+}
