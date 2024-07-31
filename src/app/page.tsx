@@ -120,7 +120,7 @@ export default function Home() {
     const interval = setInterval(() => {
       if (live)
         fetchData()
-    }, 2000)
+    }, 10000)
 
     return () => clearInterval(interval)
   }, [live])
