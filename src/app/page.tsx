@@ -1,6 +1,5 @@
 "use client"
 import axios from "axios";
-import Image from "next/image";
 import { useEffect, useState } from "react";
 
 export type Data = Root2[]
@@ -74,6 +73,8 @@ export interface UnderlyingAsset {
 }
 
 
+const PRICE_RANGE = 50
+
 export default function Home() {
   const [data, setData] = useState<{
     content: Root2,
@@ -83,7 +84,7 @@ export default function Home() {
   const [live, setLive] = useState(true)
 
   async function fetchData() {
-    axios.get<Data>("https://api-data.quanticocap.com/price/I:SPX").then((res) => {
+    return axios.get<Data>("https://api-data.quanticocap.com/price/I:SPX").then((res) => {
       let content: {
         content: Root2,
         type: "buy" | "sell" | "trade"
@@ -107,6 +108,8 @@ export default function Home() {
               content: item
             })
           }
+        } else {
+          console.log(item)
         }
       })
 
@@ -116,66 +119,372 @@ export default function Home() {
   }
 
   useEffect(() => {
+    let isCancelled = false;
 
-    const interval = setInterval(() => {
-      if (live)
-        fetchData()
-    }, 10000)
 
-    return () => clearInterval(interval)
+    async function fetch() {
+      for (; !isCancelled && live;) {
+        if (live && !isCancelled) {
+          await fetchData()
+        }
+      }
+    }
+
+
+    fetch()
+
+    return () => {
+      isCancelled = true
+    }
+
   }, [live])
+
+
+
+  const sums = data.reduce<{
+    up: number
+    down: number
+  }>(({ up, down }, curr) => {
+    const direction: "up" | "down" | "none" = curr.type == "buy" && curr.content.details.contract_type == "call" ? "up" :
+      curr.type == "sell" && curr.content.details.contract_type == "call" ? "down" :
+        curr.type == "buy" && curr.content.details.contract_type == "put" ? "down" :
+          curr.type == "sell" && curr.content.details.contract_type == "put" ? "up" : "none"
+
+    if (direction == "up") {
+      up += curr.content.last_trade.size ?? 0
+    } else if (direction == "down") {
+      down += curr.content.last_trade.size ?? 0
+    }
+
+    return {
+      up,
+      down
+    }
+  }, {
+    up: 0,
+    down: 0
+  })
+
+  let formattedData = data.sort((a, b) => {
+    return (b.content.last_trade.sip_timestamp ?? 0) - (a.content.last_trade.sip_timestamp ?? 0)
+  })
+    .filter((item) => {
+      return item.content.details.strike_price > item.content.underlying_asset.value - PRICE_RANGE && item.content.details.strike_price < item.content.underlying_asset.value + PRICE_RANGE
+    })
+
+
 
   return (
     <main>
       {/* table with time, type, price and size */}
-      <button onClick={() => {
-        setLive(live => !live)
-      }}>
-        {
-          live ? "Stop" : "Start"
-        }
-      </button>
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Trade</th>
-            <th>Size</th>
-            <th>Strike</th>
-            <th>Price</th>
-            <th>Type</th>
-            <th>Spot</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data
-            .sort((a, b) => {
-              return (b.content.last_trade.sip_timestamp ?? 0) - (a.content.last_trade.sip_timestamp ?? 0)
-            })
-            .map((item, index) => (
-              <tr key={index} style={{
-                backgroundColor: item.type === "buy" ? "green" : item.type === "sell" ? "red" : "transparent",
-                color: item.type === "buy" ? "white" : item.type === "sell" ? "white" : "white"
-              }}>
-                <td>{new Date((item.content.last_trade.sip_timestamp ?? 0) / 1000000).toLocaleString([], {
-                  timeZone: "America/New_York",
-                })}</td>
-                <td>{item.type.toUpperCase()}</td>
-                <td>{item.content.last_trade.size}</td>
-                <td>{item.content.details.strike_price}</td>
-                <td>{item.content.last_trade.price}</td>
-                <td>{item.content.details.contract_type.toUpperCase()}</td>
-                <td>{
-                  item.type == "buy" && item.content.details.contract_type == "call" ? "📈" :
-                    item.type == "sell" && item.content.details.contract_type == "call" ? "📉" :
-                      item.type == "buy" && item.content.details.contract_type == "put" ? "📉" :
-                        item.type == "sell" && item.content.details.contract_type == "put" ? "📈" : ""
+      <div className="flex gap-2">
+        <button onClick={() => {
+          setLive(live => !live)
+        }}>
+          {
+            live ? "Stop" : "Start"
+          }
+        </button>
+        <div>
+          {
+            formattedData[0]?.content.underlying_asset.value.toFixed(2)
+          }
+        </div>
 
-                }</td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
+        <div style={{
+          background: sums.up > sums.down ? "green" : sums.up < sums.down ? "red" : "transparent",
+        }} className="p-2">
+          Up: {(sums.up / (sums.up + sums.down) * 100).toFixed(2)}%({sums.up}) Down: {(sums.down / (sums.up + sums.down) * 100).toFixed(2)}%({sums.down})
+        </div>
+
+      </div>
+      <div className="flex gap-2">
+        <NormalTable formattedData={formattedData.filter(item => item.content.last_trade.size == 1)} />
+        <NormalTable formattedData={formattedData.filter(item => item.content.last_trade.size != 1)} />
+        <AggregatesTable formattedData={formattedData.filter(item => item.content.last_trade.size == 1)} strikes={formattedData.map(i => i.content.details.strike_price)} />
+        <AggregatesTable formattedData={formattedData.filter(item => item.content.last_trade.size != 1)} strikes={formattedData.map(i => i.content.details.strike_price)} />
+        <AggregatesTable formattedData={formattedData} strikes={formattedData.map(i => i.content.details.strike_price)} />
+        <TotalTable formattedData={formattedData} strikes={formattedData.map(i => i.content.details.strike_price)} />
+      </div>
     </main>
   );
+}
+
+
+
+
+function NormalTable({
+  formattedData
+}: {
+  formattedData: {
+    content: Root2,
+    type: "buy" | "sell" | "trade"
+  }[]
+}) {
+  return <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Trade</th>
+        <th>Size</th>
+        <th>Strike</th>
+        <th>Price</th>
+        <th>Type</th>
+        <th>Spot</th>
+      </tr>
+    </thead>
+    <tbody>
+      {formattedData
+        .map((item, index) => {
+          const direction: "up" | "down" | "none" = item.type == "buy" && item.content.details.contract_type == "call" ? "up" :
+            item.type == "sell" && item.content.details.contract_type == "call" ? "down" :
+              item.type == "buy" && item.content.details.contract_type == "put" ? "down" :
+                item.type == "sell" && item.content.details.contract_type == "put" ? "up" : "none"
+
+          return (
+            <tr key={index} style={{
+              backgroundColor: direction === "up" ? "green" : direction === "down" ? "red" : "transparent",
+              color: direction === "up" ? "white" : direction === "down" ? "white" : "white"
+            }}>
+              <td>{new Date((item.content.last_trade.sip_timestamp ?? 0) / 1000000).toLocaleString([], {
+                timeZone: "America/New_York",
+              })}</td>
+              <td>{item.type.toUpperCase()}</td>
+              <td>{item.content.last_trade.size}</td>
+              <td>{item.content.details.strike_price}</td>
+              <td>{item.content.last_trade.price}</td>
+              <td>{item.content.details.contract_type.toUpperCase()}</td>
+              <td>{
+                direction == "up" ? "📈" :
+                  direction == "down" ? "📉" : ""
+              }</td>
+            </tr>
+          )
+        })}
+    </tbody>
+  </table>
+}
+
+function AggregatesTable({
+  formattedData,
+  strikes
+}: {
+  formattedData: {
+    content: Root2,
+    type: "buy" | "sell" | "trade"
+  }[]
+  strikes: number[]
+}) {
+
+  const data = formattedData
+    .reduce<{
+      [key: number]: {
+        up: number
+        down: number
+        trade: number
+        call: number
+        put: number
+      }
+    }>((prev, curr) => {
+      const direction: "up" | "down" | "none" = curr.type == "buy" && curr.content.details.contract_type == "call" ? "up" :
+        curr.type == "sell" && curr.content.details.contract_type == "call" ? "down" :
+          curr.type == "buy" && curr.content.details.contract_type == "put" ? "down" :
+            curr.type == "sell" && curr.content.details.contract_type == "put" ? "up" : "none"
+      if (!prev[curr.content.details.strike_price]) {
+        prev[curr.content.details.strike_price] = {
+          up: 0,
+          down: 0,
+          trade: 0,
+          call: 0,
+          put: 0
+        }
+      }
+
+
+      if (direction == "up") {
+        prev[curr.content.details.strike_price].up += curr.content.last_trade.size ?? 0
+      } else if (direction == "down") {
+        prev[curr.content.details.strike_price].down += curr.content.last_trade.size ?? 0
+      } else {
+        prev[curr.content.details.strike_price].trade += curr.content.last_trade.size ?? 0
+        if (curr.content.details.contract_type == "call") {
+          prev[curr.content.details.strike_price].call += curr.content.last_trade.size ?? 0
+        } else if (curr.content.details.contract_type == "put") {
+          prev[curr.content.details.strike_price].put += curr.content.last_trade.size ?? 0
+        }
+      }
+
+
+
+
+
+
+      return prev;
+    }, {} as {
+      [key: number]: {
+        up: number
+        down: number
+        trade: number
+        call: number
+        put: number
+      }
+    }
+    )
+
+
+  return <table>
+    <thead>
+      <tr>
+        <th>Strikes</th>
+        <th>Up</th>
+        <th>Down</th>
+        <th>Delta</th>
+        <th>Call</th>
+        <th>Put</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        [... new Set(strikes)]
+          .sort((a, b) => {
+            return b - a
+          })
+          .map((strike, index) => {
+            const item = data[Number(strike)]
+            if (!item) {
+              return <tr key={index} >
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+            }
+
+            const delta = item.up - item.down
+            return (
+              <tr key={index} style={{
+                backgroundColor: delta > 0 ? "green" : delta < 0 ? "red" : "transparent",
+                color: delta > 0 ? "white" : delta < 0 ? "white" : "white"
+              }}>
+                <td>{strike}</td>
+                <td>{item.up}</td>
+                <td>{item.down}</td>
+                <td>{delta}</td>
+                <td className="bg-black">{item.call}</td>
+                <td className="bg-black">{item.put}</td>
+              </tr>
+            )
+          })}
+    </tbody>
+  </table>
+}
+
+function TotalTable({
+  formattedData,
+  strikes
+}: {
+  formattedData: {
+    content: Root2,
+    type: "buy" | "sell" | "trade"
+  }[]
+  strikes: number[]
+}) {
+  const data = formattedData
+    .reduce<{
+      [key: number]: {
+        up: number
+        down: number
+        trade: number
+        call: number
+        put: number
+      }
+    }>((prev, curr) => {
+      const direction: "up" | "down" | "none" = curr.type == "buy" && curr.content.details.contract_type == "call" ? "up" :
+        curr.type == "sell" && curr.content.details.contract_type == "call" ? "down" :
+          curr.type == "buy" && curr.content.details.contract_type == "put" ? "down" :
+            curr.type == "sell" && curr.content.details.contract_type == "put" ? "up" : "none"
+      if (!prev[curr.content.details.strike_price]) {
+        prev[curr.content.details.strike_price] = {
+          up: 0,
+          down: 0,
+          trade: 0,
+          call: 0,
+          put: 0
+        }
+      }
+
+
+      if (direction == "up") {
+        prev[curr.content.details.strike_price].up += curr.content.last_trade.size ?? 0
+      } else if (direction == "down") {
+        prev[curr.content.details.strike_price].down += curr.content.last_trade.size ?? 0
+      } else {
+        prev[curr.content.details.strike_price].trade += curr.content.last_trade.size ?? 0
+        if (curr.content.details.contract_type == "call") {
+          prev[curr.content.details.strike_price].call += curr.content.last_trade.size ?? 0
+        } else if (curr.content.details.contract_type == "put") {
+          prev[curr.content.details.strike_price].put += curr.content.last_trade.size ?? 0
+        }
+      }
+
+
+
+
+
+
+      return prev;
+    }, {} as {
+      [key: number]: {
+        up: number
+        down: number
+        trade: number
+        call: number
+        put: number
+      }
+    }
+    )
+
+
+  return <table>
+    <thead>
+      <tr>
+        <th>Strikes</th>
+        <th>Up/Down</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        [... new Set(strikes)]
+          .sort((a, b) => {
+            return b - a
+          })
+          .map((strike, index) => {
+            const item = data[Number(strike)]
+            if (!item) {
+              return <tr key={index} >
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+            }
+
+            const delta = (item.up - item.down) + (item.call - item.put)
+            return (
+              <tr key={index} style={{
+                backgroundColor: delta > 0 ? "green" : delta < 0 ? "red" : "transparent",
+                color: delta > 0 ? "white" : delta < 0 ? "white" : "white"
+              }}>
+                <td>{strike}</td>
+                <td>{delta}</td>
+              </tr>
+            )
+          })}
+    </tbody>
+  </table>
+
 }

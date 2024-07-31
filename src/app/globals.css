@@ -43,4 +43,12 @@ td {
   @apply p-2;
   @apply text-left;
   @apply border-b;
+  height: 50px
+}
+
+table {
+  table-layout: fixed;
+  display: inline-table;
+  height: 100%;
+  overflow-y: auto;
 }
