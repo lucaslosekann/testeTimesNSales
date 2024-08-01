@@ -661,7 +661,7 @@ function TotalTableAggregation({
                 height: 800,
                 template: PlotlyTemplate,
                 xaxis: {
-                    range: [-range2, range2]
+                    range: [-500, 500]
 
 
                 },
