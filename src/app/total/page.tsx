@@ -389,7 +389,7 @@ function TotalTable({
                 height: 800,
                 template: PlotlyTemplate,
                 xaxis: {
-                    range: [-range1, range1]
+                    range: [-500, 500]
 
 
                 },
@@ -455,7 +455,7 @@ function TotalTable({
                 height: 800,
                 template: PlotlyTemplate,
                 xaxis: {
-                    range: [-range2, range2]
+                    range: [-500, 500]
 
 
                 },
