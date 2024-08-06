@@ -3,7 +3,8 @@ import axios from "axios";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import PlotlyTemplate from "./PlotlyTemplate";
-import { timeStamp } from "console";
+import { log, timeStamp } from "console";
+import { useSearchParams } from "next/navigation";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false, })
 
@@ -84,9 +85,12 @@ export type DataWithType = {
 }[]
 
 
-const PRICE_RANGE = 50
+const DEFAULT_PRICE_RANGE = 15
 const MAX_TIME_MS = 5 * 60 * 1000
+// export default function Home() { // get range from query
 export default function Home() {
+    const query = useSearchParams();
+    const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
     const [data, setData] = useState<DataWithType>([])
 
 
@@ -119,8 +123,6 @@ export default function Home() {
                             content: item
                         })
                     }
-                } else {
-                    console.log(item)
                 }
             })
 
@@ -131,9 +133,7 @@ export default function Home() {
                     request: content,
                     timestamp: Date.now()
                 });
-                return newH.filter(({ timestamp }) => {
-                    return timestamp > Date.now() - MAX_TIME_MS
-                })
+                return newH
             })
 
         })
@@ -221,8 +221,9 @@ export default function Home() {
             </div>
             <div className="flex gap-2">
                 {/* <TotalTable formattedData={formattedData} strikes={formattedData.map(i => i.content.details.strike_price)} /> */}
+                <Heatmap history={history} spotPrice={formattedData[0]?.content.underlying_asset.value} timeMs={1 * 60 * 1000} />
                 <TotalTableAggregation history={history} spotPrice={formattedData[0]?.content.underlying_asset.value} timeMs={1 * 60 * 1000} />
-                <TotalTableAggregation history={history} spotPrice={formattedData[0]?.content.underlying_asset.value} timeMs={5 * 60 * 1000} />
+                {/* <TotalTableAggregation history={history} spotPrice={formattedData[0]?.content.underlying_asset.value} timeMs={5 * 60 * 1000} /> */}
             </div>
         </main>
     );
@@ -240,6 +241,8 @@ function TotalTable({
     }[]
     strikes: number[]
 }) {
+    const query = useSearchParams();
+    const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
     const data = formattedData
         .reduce<{
             [key: number]: {
@@ -510,7 +513,8 @@ function TotalTableAggregation({
     timeMs: number,
     spotPrice: number
 }) {
-
+    const query = useSearchParams();
+    const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
     const data = history
         .filter(({ timestamp }) => {
             return timestamp > Date.now() - timeMs
@@ -702,4 +706,219 @@ function TotalTableAggregation({
         />
     </div>
 
+}
+
+function Heatmap({
+    history,
+    timeMs,
+    spotPrice
+}: {
+    history: {
+        timestamp: number
+        request: DataWithType
+    }[],
+    timeMs: number,
+    spotPrice: number
+}) {
+    const query = useSearchParams();
+    const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
+    const strikes = new Set<number>()
+
+    const data = history.map(({ timestamp }) => {
+        const data = getAggregated(history.filter(({ timestamp: t }) => t < timestamp), timeMs)
+        Object.keys(data).forEach((strike) => {
+            strikes.add(Number(strike))
+        })
+        return {
+            timestamp,
+            data
+        }
+    })
+
+
+
+
+
+    return <div className="flex gap-3">
+        <Plot
+            data={[
+                {
+                    type: 'heatmap',
+                    x: data.map(({ timestamp }) => {
+                        return new Date(timestamp).toLocaleTimeString([], {
+                            timeZone: "America/New_York"
+                        })
+                    }),
+                    y: [...strikes],
+                    z: transpose(data.map(({ data }) => {
+                        return Object.values(data).map((item) => {
+                            return (item.up - item.down) * -1
+                        })
+                    })),
+                    colorscale: [
+                        [0, 'red'],
+                        [0.5, 'transparent'],
+                        [1, 'green']
+                    ]
+                }
+            ]}
+            layout={{
+                width: 800,
+                height: 800,
+                template: PlotlyTemplate,
+                annotations: [
+                    {
+                        xref: "paper",
+                        x: 0,
+                        y: spotPrice,
+                        xanchor: "left",
+                        yanchor: "middle",
+                        text: spotPrice?.toFixed(2),
+                        showarrow: false,
+                        bgcolor: "white",
+                        xshift: 0,
+                        font: {
+                            color: "black",
+                        },
+                    }
+                ],
+                shapes: [
+                    {
+                        //spot price line
+                        type: 'line',
+                        x0: 0,
+                        x1: 1,
+                        xref: 'paper',
+
+                        y0: spotPrice,
+                        y1: spotPrice,
+
+                        line: {
+                            color: 'white',
+                            width: 1
+                        }
+                    }
+                ]
+            }}
+        />
+    </div>
+
+}
+
+
+
+function getAggregated(history: {
+    timestamp: number
+    request: DataWithType
+}[], timeMs: number) {
+    const query = useSearchParams();
+    const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
+    const data = history
+        .filter(({ timestamp }) => {
+            return true
+        })
+        .reduce<{
+            [key: number]: {
+                up: number
+                down: number
+                trade: number
+                call: number
+                put: number
+            }
+        }>((prev, curr) => {
+
+            const data = curr.request
+                .sort((a, b) => {
+                    return (b.content.last_trade.sip_timestamp ?? 0) - (a.content.last_trade.sip_timestamp ?? 0)
+                })
+                .filter((item) => {
+                    return item.content.details.strike_price > item.content.underlying_asset.value - PRICE_RANGE && item.content.details.strike_price < item.content.underlying_asset.value + PRICE_RANGE
+                })
+                .reduce<{
+                    [key: number]: {
+                        up: number
+                        down: number
+                        trade: number
+                        call: number
+                        put: number
+                    }
+                }>((prev, curr) => {
+
+                    const direction: "up" | "down" | "none" = curr.type == "buy" && curr.content.details.contract_type == "call" ? "up" :
+                        curr.type == "sell" && curr.content.details.contract_type == "call" ? "down" :
+                            curr.type == "buy" && curr.content.details.contract_type == "put" ? "down" :
+                                curr.type == "sell" && curr.content.details.contract_type == "put" ? "up" : "none"
+                    if (!prev[curr.content.details.strike_price]) {
+                        prev[curr.content.details.strike_price] = {
+                            up: 0,
+                            down: 0,
+                            trade: 0,
+                            call: 0,
+                            put: 0
+                        }
+                    }
+
+
+                    if (direction == "up") {
+                        prev[curr.content.details.strike_price].up += curr.content.last_trade.size ?? 0
+                    } else if (direction == "down") {
+                        prev[curr.content.details.strike_price].down += curr.content.last_trade.size ?? 0
+                    } else {
+                        prev[curr.content.details.strike_price].trade += curr.content.last_trade.size ?? 0
+                        if (curr.content.details.contract_type == "call") {
+                            prev[curr.content.details.strike_price].call += curr.content.last_trade.size ?? 0
+                        } else if (curr.content.details.contract_type == "put") {
+                            prev[curr.content.details.strike_price].put += curr.content.last_trade.size ?? 0
+                        }
+                    }
+
+                    return prev;
+                }, {} as {
+                    [key: number]: {
+                        up: number
+                        down: number
+                        trade: number
+                        call: number
+                        put: number
+                    }
+                })
+
+
+            Object.entries(data).forEach(([strike, data]) => {
+                if (!prev[Number(strike)]) {
+                    prev[Number(strike)] = {
+                        up: 0,
+                        down: 0,
+                        trade: 0,
+                        call: 0,
+                        put: 0
+                    }
+                }
+
+                prev[Number(strike)].up += data.up
+                prev[Number(strike)].down += data.down
+                prev[Number(strike)].trade += data.trade
+                prev[Number(strike)].call += data.call
+                prev[Number(strike)].put += data.put
+            })
+
+
+
+
+            return prev;
+        }, {} as {
+            [key: number]: {
+                up: number
+                down: number
+                trade: number
+                call: number
+                put: number
+            }
+        }
+        )
+    return data
+}
+
+function transpose(matrix: any[][]) {
+    return matrix[0]?.map((col, i) => matrix.map(row => row[i]));
 }
