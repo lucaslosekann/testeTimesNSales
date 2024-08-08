@@ -86,6 +86,7 @@ export type DataWithType = {
 
 
 const DEFAULT_PRICE_RANGE = 15
+const DEFAULT_X_RANGE = 500
 const MAX_TIME_MS = 5 * 60 * 1000
 // export default function Home() { // get range from query
 export default function Home() {
@@ -244,6 +245,7 @@ function TotalTableAggregation({
 }) {
     const query = useSearchParams();
     const PRICE_RANGE = query.has("range") ? Number(query.get("range")) : DEFAULT_PRICE_RANGE
+    const X_RANGE = query.has("xrange") ? Number(query.get("xrange")) : DEFAULT_X_RANGE
     const data = history
         .filter(({ timestamp }) => {
             return timestamp > Date.now() - timeMs
@@ -401,7 +403,7 @@ function TotalTableAggregation({
                 height: 800,
                 template: PlotlyTemplate,
                 xaxis: {
-                    range: [-500, 500]
+                    range: [-X_RANGE, X_RANGE]
 
 
                 },
